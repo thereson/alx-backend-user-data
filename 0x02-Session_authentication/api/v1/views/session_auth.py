@@ -1,44 +1,46 @@
 #!/usr/bin/env python3
-""" Module of Index views
+""" Module of Users views
 """
-from flask import jsonify, abort
+import os
+from flask import jsonify, request
 from api.v1.views import app_views
+from models.user import User
 
 
-@app_views.route('/status', methods=['GET'], strict_slashes=False)
-def status() -> str:
-    """ GET /api/v1/status
-    Return:
-      - the status of the API
+@app_views.route('/auth_session/login', methods=['POST'], strict_slashes=False)
+def auth_session():
     """
-    return jsonify({"status": "OK"})
-
-
-@app_views.route('/stats/', strict_slashes=False)
-def stats() -> str:
-    """ GET /api/v1/stats
+    Handle user login
     Return:
-      - the number of each objects
+        dictionary representation of user if found else error message
     """
-    from models.user import User
-    stats = {}
-    stats['users'] = User.count()
-    return jsonify(stats)
+    email = request.form.get('email')
+    password = request.form.get('password')
+    if email is None or email == '':
+        return jsonify({"error": "email missing"}), 400
+    if password is None or password == '':
+        return jsonify({"error": "password missing"}), 400
+    users = User.search({"email": email})
+    if not users or users == []:
+        return jsonify({"error": "no user found for this email"}), 404
+    for user in users:
+        if user.is_valid_password(password):
+            from api.v1.app import auth
+            session_id = auth.create_session(user.id)
+            resp = jsonify(user.to_json())
+            session_name = os.getenv('SESSION_NAME')
+            resp.set_cookie(session_name, session_id)
+            return resp
+    return jsonify({"error": "wrong password"}), 401
 
 
-@app_views.route('/unauthorized', methods=['GET'], strict_slashes=False)
-def unauthorized() -> str:
-    """ GET /api/v1/unauthorized
-    Return:
-      - raises a 401 error by using abort
+@app_views.route('/auth_session/logout', methods=['DELETE'],
+                 strict_slashes=False)
+def handle_logout():
     """
-    abort(401)
-
-
-@app_views.route('/forbidden', methods=['GET'], strict_slashes=False)
-def forbidden() -> str:
-    """ GET /api/v1/forbidden
-    Return:
-      - raises a 403 error by using abort
+    Handle user logout
     """
-    abort(403)
+    from api.v1.app import auth
+    if auth.destroy_session(request):
+        return jsonify({}), 200
+    abort(404)
